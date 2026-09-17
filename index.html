@@ -8,6 +8,20 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      (() => {
+        const redirectParameter = '__github_pages_redirect';
+        const url = new URL(window.location.href);
+        const target = url.searchParams.get(redirectParameter);
+
+        if (!target || !target.startsWith('/') || target.startsWith('//')) return;
+
+        const targetUrl = new URL(target, window.location.origin);
+        if (targetUrl.origin !== window.location.origin) return;
+
+        window.history.replaceState(null, '', `${targetUrl.pathname}${targetUrl.search}${targetUrl.hash}`);
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

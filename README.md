@@ -75,6 +75,16 @@ src/
 
 Upload и удаление вложений, pagination, фильтрация, роли, аналитика, статьи, Telegram и другие разделы в v1 не входят.
 
+## Deployment / GitHub Pages
+
+The repository includes `.github/workflows/deploy-pages.yml`. It runs on pushes to `main` and can also be started manually. The workflow installs dependencies with `npm ci`, runs typecheck and tests, builds the Vite application, and publishes `dist/` through the official GitHub Pages artifact and deployment actions.
+
+The custom domain is `https://admin.alpool.ru`. `public/CNAME` is copied to `dist/CNAME` during the Vite build. DNS records and the GitHub Pages custom-domain setting must be configured separately; this repository does not change DNS or repository settings.
+
+The Vite base is `/`, which is correct for a custom domain at the site root. The app keeps `BrowserRouter`. Because GitHub Pages does not provide server-side SPA rewrites, `public/404.html` redirects the original pathname, query, and hash to the root, and the bootstrap script in `index.html` restores that URL before React Router starts. This supports direct visits to `/login`, `/leads`, and `/leads/:id` without switching to `HashRouter`.
+
+The Pages build explicitly sets `VITE_API_BASE_URL=https://api.alpool.ru` and `VITE_DEMO_MODE=false`. Demo mode remains local-only because it additionally requires Vite development mode. Before production use, the backend must allow `https://admin.alpool.ru` in CORS. No frontend secret is required for this deployment.
+
 ## Production
 
 Планируемый адрес панели: `https://admin.alpool.ru`. Deployment не выполняется этим проектом. Перед публикацией backend должен разрешить `https://admin.alpool.ru` в CORS; также нужно проверить production environment, HTTPS и реальные server-side credentials. Commit, push и deploy выполняются отдельно.
