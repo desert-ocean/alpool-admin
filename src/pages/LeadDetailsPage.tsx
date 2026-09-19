@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
-import { downloadAttachment, getLead, getLeadAttachments, updateLeadStatus } from '../api/leads';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { deleteAttachment, deleteLead, downloadAttachment, getLead, getLeadAttachments, updateLeadStatus } from '../api/leads';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { EmptyState, ErrorState, LoadingState } from '../components/LoadingState';
 import { StatusBadge } from '../components/StatusBadge';
 import { isLeadStatus, LEAD_STATUS_LABELS, LEAD_STATUSES, type Attachment, type Lead, type LeadStatus } from '../types/api';
@@ -18,6 +19,7 @@ function ContactLink({ kind, value }: { kind: 'phone' | 'email'; value: string |
 
 export function LeadDetailsPage() {
   const { id = '' } = useParams();
+  const navigate = useNavigate();
   const [lead, setLead] = useState<Lead | null>(null);
   const [attachments, setAttachments] = useState<Attachment[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -27,6 +29,13 @@ export function LeadDetailsPage() {
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [downloadingId, setDownloadingId] = useState<number | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [selectedAttachment, setSelectedAttachment] = useState<Attachment | null>(null);
+  const [deletingAttachmentId, setDeletingAttachmentId] = useState<number | null>(null);
+  const [attachmentMessage, setAttachmentMessage] = useState<string | null>(null);
+  const [attachmentDeleteError, setAttachmentDeleteError] = useState<string | null>(null);
+  const [leadDeleteDialogOpen, setLeadDeleteDialogOpen] = useState(false);
+  const [deletingLead, setDeletingLead] = useState(false);
+  const [leadDeleteError, setLeadDeleteError] = useState<string | null>(null);
 
   const loadDetails = useCallback(async () => {
     if (!/^\d+$/.test(id)) {
@@ -79,6 +88,40 @@ export function LeadDetailsPage() {
     }
   };
 
+  const confirmAttachmentDelete = async () => {
+    if (!selectedAttachment || deletingAttachmentId !== null) return;
+    const attachment = selectedAttachment;
+    setDeletingAttachmentId(attachment.id);
+    setAttachmentMessage(null);
+    setAttachmentDeleteError(null);
+    try {
+      await deleteAttachment(attachment.id);
+      setAttachments((current) => current?.filter((item) => item.id !== attachment.id) ?? current);
+      setSelectedAttachment(null);
+      setAttachmentMessage('Вложение удалено');
+    } catch (requestError) {
+      setSelectedAttachment(null);
+      setAttachmentDeleteError(getUserErrorMessage(requestError, 'Не удалось удалить вложение.'));
+    } finally {
+      setDeletingAttachmentId(null);
+    }
+  };
+
+  const confirmLeadDelete = async () => {
+    if (!lead || deletingLead) return;
+    setDeletingLead(true);
+    setLeadDeleteError(null);
+    try {
+      await deleteLead(lead.id);
+      navigate('/leads', { replace: true });
+    } catch (requestError) {
+      setLeadDeleteError(getUserErrorMessage(requestError, 'Не удалось удалить заявку.'));
+      setLeadDeleteDialogOpen(false);
+    } finally {
+      setDeletingLead(false);
+    }
+  };
+
   if (loading) return <main className="page-content"><LoadingState label="Загружаем заявку…" /></main>;
   if (error) return <main className="page-content"><ErrorState message={error} onRetry={() => void loadDetails()} /></main>;
   if (!lead) return <main className="page-content"><EmptyState title="Заявка не найдена" description="Проверьте ссылку или вернитесь к списку заявок." /></main>;
@@ -110,23 +153,58 @@ export function LeadDetailsPage() {
           <section className="status-card" aria-labelledby="status-title">
             <div className="card-heading"><div><span className="eyebrow">WORKFLOW</span><h2 id="status-title">Статус</h2></div><StatusBadge status={lead.status} /></div>
             <label className="select-label" htmlFor="lead-status">Текущий этап заявки</label>
-            <select id="lead-status" value={selectedStatus} onChange={(event) => { setSelectedStatus(event.target.value as LeadStatus | ''); setSaveMessage(null); }} disabled={saving}>
+            <select id="lead-status" value={selectedStatus} onChange={(event) => { setSelectedStatus(event.target.value as LeadStatus | ''); setSaveMessage(null); }} disabled={saving || deletingLead}>
               {!selectedStatus && <option value="">Выберите статус</option>}
               {LEAD_STATUSES.map((status) => <option value={status} key={status}>{LEAD_STATUS_LABELS[status]}</option>)}
             </select>
-            <button className="button button-primary button-wide" onClick={() => void saveStatus()} disabled={saving || !selectedStatus || selectedStatus === lead.status}>
+            <button className="button button-primary button-wide" onClick={() => void saveStatus()} disabled={saving || deletingLead || !selectedStatus || selectedStatus === lead.status}>
               {saving ? <><span className="spinner spinner-small" aria-hidden="true" /> Сохраняем…</> : 'Сохранить статус'}
             </button>
             {saveMessage && <p className={`inline-message ${saveMessage.includes('не удалось') ? 'inline-error' : 'inline-success'}`} role={saveMessage.includes('не удалось') ? 'alert' : 'status'}>{saveMessage}</p>}
           </section>
+          <section className='danger-card' aria-labelledby='delete-lead-title'>
+            <div className='card-heading'>
+              <div>
+                <span className='eyebrow'>DANGER ZONE</span>
+                <h2 id='delete-lead-title'>Удаление заявки</h2>
+              </div>
+            </div>
+            <p className='danger-warning'>Удаление необратимо и также удалит все вложения этой заявки.</p>
+            <button className='button button-danger button-wide' type='button' onClick={() => { setLeadDeleteError(null); setLeadDeleteDialogOpen(true); }} disabled={deletingLead || deletingAttachmentId !== null}>
+              Удалить заявку
+            </button>
+            {leadDeleteError && <div className='notice notice-error' role='alert'>{leadDeleteError}</div>}
+          </section>
           <section className="attachments-card" aria-labelledby="attachments-title">
             <div className="card-heading"><div><span className="eyebrow">FILES / {attachments?.length ?? 0}</span><h2 id="attachments-title">Вложения</h2></div></div>
             {downloadError && <div className="notice notice-error" role="alert">{downloadError}</div>}
+            {attachmentMessage && <div className='notice notice-success' role='status'>{attachmentMessage}</div>}
+            {attachmentDeleteError && <div className='notice notice-error' role='alert'>{attachmentDeleteError}</div>}
             {attachments?.length === 0 && <p className="muted empty-attachments">В этой заявке нет вложений.</p>}
-            {attachments && attachments.length > 0 && <ul className="attachment-list">{attachments.map((attachment) => <li key={attachment.id} className="attachment-item"><span className="file-icon" aria-hidden="true">□</span><span className="attachment-info"><strong title={attachment.original_filename}>{attachment.original_filename}</strong><small>{[formatFileType(attachment.content_type), formatFileSize(attachment.size), formatDate(attachment.created_at)].filter(Boolean).join(' · ')}</small></span><button className="download-button" onClick={() => void startDownload(attachment)} disabled={downloadingId !== null} aria-label={`Скачать ${attachment.original_filename}`}>{downloadingId === attachment.id ? 'Скачиваем…' : <><span aria-hidden="true">↓</span><span>Скачать</span></>}</button></li>)}</ul>}
+            {attachments && attachments.length > 0 && <ul className="attachment-list">{attachments.map((attachment) => <li key={attachment.id} className="attachment-item"><span className="file-icon" aria-hidden="true">□</span><span className="attachment-info"><strong title={attachment.original_filename}>{attachment.original_filename}</strong><small>{[formatFileType(attachment.content_type), formatFileSize(attachment.size), formatDate(attachment.created_at)].filter(Boolean).join(' · ')}</small></span><span className='attachment-actions'><button className="download-button" onClick={() => void startDownload(attachment)} disabled={downloadingId !== null || deletingAttachmentId !== null || deletingLead} aria-label={`Скачать ${attachment.original_filename}`}>{downloadingId === attachment.id ? 'Скачиваем…' : <><span aria-hidden="true">↓</span><span>Скачать</span></>}</button><button className='delete-button' type='button' onClick={() => { setAttachmentMessage(null); setAttachmentDeleteError(null); setSelectedAttachment(attachment); }} disabled={deletingAttachmentId !== null || deletingLead} aria-label={`Удалить ${attachment.original_filename}`}>Удалить</button></span></li>)}</ul>}
           </section>
         </aside>
       </div>
+      <ConfirmDialog
+        open={selectedAttachment !== null}
+        title='Удалить вложение?'
+        description={<p>Файл <strong>{selectedAttachment?.original_filename}</strong> будет удалён без возможности восстановления.</p>}
+        confirmLabel='Удалить'
+        cancelLabel='Отмена'
+        loading={deletingAttachmentId !== null}
+        onConfirm={() => void confirmAttachmentDelete()}
+        onCancel={() => { if (deletingAttachmentId === null) setSelectedAttachment(null); }}
+      />
+      <ConfirmDialog
+        open={leadDeleteDialogOpen}
+        title='Удалить заявку?'
+        content={<div className='confirm-summary'><p>Номер заявки: <strong>#{lead.id}</strong></p><p>Клиент: <strong>{lead.name}</strong></p><p>Вложений: <strong>{attachments?.length ?? 0}</strong></p><p className='danger-warning'>Заявка и все её вложения будут удалены без возможности восстановления.</p></div>}
+        confirmLabel='Удалить заявку'
+        cancelLabel='Отмена'
+        loading={deletingLead}
+        onConfirm={() => void confirmLeadDelete()}
+        onCancel={() => { if (!deletingLead) setLeadDeleteDialogOpen(false); }}
+      />
     </main>
   );
 }

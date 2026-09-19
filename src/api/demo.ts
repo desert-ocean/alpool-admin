@@ -149,4 +149,21 @@ export function updateDemoLeadStatus(id: number, status: LeadStatus): Promise<Le
   return Promise.resolve({ ...lead });
 }
 
+export function deleteDemoAttachment(id: number): Promise<void> {
+  const attachmentIndex = demoAttachments.findIndex((attachment) => attachment.id === id);
+  if (attachmentIndex === -1) return Promise.reject(new Error('Attachment not found'));
+  demoAttachments.splice(attachmentIndex, 1);
+  return Promise.resolve();
+}
+
+export function deleteDemoLead(id: number): Promise<void> {
+  const leadIndex = demoLeads.findIndex((lead) => lead.id === id);
+  if (leadIndex === -1) return Promise.reject(new Error('Lead not found'));
+  demoLeads.splice(leadIndex, 1);
+  for (let index = demoAttachments.length - 1; index >= 0; index -= 1) {
+    if (demoAttachments[index].lead_id === id) demoAttachments.splice(index, 1);
+  }
+  return Promise.resolve();
+}
+
 export const DEMO_DOWNLOAD_MESSAGE = 'Скачивание отключено в demo-preview: реальные файлы не создаются.';

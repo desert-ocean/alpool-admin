@@ -1,5 +1,13 @@
 import { apiClient } from './client';
-import { DEMO_DOWNLOAD_MESSAGE, getDemoLead, getDemoLeadAttachments, getDemoLeads, updateDemoLeadStatus } from './demo';
+import {
+  DEMO_DOWNLOAD_MESSAGE,
+  deleteDemoAttachment,
+  deleteDemoLead,
+  getDemoLead,
+  getDemoLeadAttachments,
+  getDemoLeads,
+  updateDemoLeadStatus,
+} from './demo';
 import { isDemoMode } from '../config/runtime';
 import type { Attachment, Lead, LeadStatus } from '../types/api';
 
@@ -24,6 +32,20 @@ export function updateLeadStatus(id: number, status: LeadStatus): Promise<Lead> 
 export function getLeadAttachments(id: string): Promise<Attachment[]> {
   if (isDemoMode()) return getDemoLeadAttachments(id);
   return apiClient.request<Attachment[]>(`/api/admin/leads/${encodeURIComponent(id)}/attachments`);
+}
+
+export function deleteAttachment(id: number): Promise<void> {
+  if (isDemoMode()) return deleteDemoAttachment(id);
+  return apiClient.request<void>(`/api/admin/attachments/${id}`, {
+    method: 'DELETE',
+  });
+}
+
+export function deleteLead(id: number): Promise<void> {
+  if (isDemoMode()) return deleteDemoLead(id);
+  return apiClient.request<void>(`/api/admin/leads/${id}`, {
+    method: 'DELETE',
+  });
 }
 
 function decodeFilename(value: string): string {

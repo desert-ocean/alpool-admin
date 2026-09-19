@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { downloadAttachment, getDownloadFilename, getLead, getLeadAttachments, getLeads, updateLeadStatus } from '../api/leads';
-import { extractErrorMessage } from '../api/client';
+import { deleteAttachment, deleteLead, downloadAttachment, getDownloadFilename, getLead, getLeadAttachments, getLeads, updateLeadStatus } from '../api/leads';
+import { extractErrorMessage, setUnauthorizedHandler } from '../api/client';
 import { triggerBlobDownload } from '../utils/download';
 
 function jsonResponse(body: unknown, status = 200, headers: Record<string, string> = {}) {
@@ -15,12 +15,37 @@ beforeEach(() => {
 
 afterEach(() => {
   window.sessionStorage.clear();
+  setUnauthorizedHandler(null);
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
 describe('API error and download helpers', () => {
+  it('deletes attachments and leads with the authenticated DELETE client', async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    await deleteAttachment(4);
+    await deleteLead(12);
+
+    expect(vi.mocked(fetch).mock.calls[0][0]).toBe('https://api.alpool.ru/api/admin/attachments/4');
+    expect(vi.mocked(fetch).mock.calls[0][1]).toMatchObject({ method: 'DELETE' });
+    expect((vi.mocked(fetch).mock.calls[0][1]?.headers as Headers).get('Authorization')).toBe('Bearer download-token');
+    expect(vi.mocked(fetch).mock.calls[1][0]).toBe('https://api.alpool.ru/api/admin/leads/12');
+    expect(vi.mocked(fetch).mock.calls[1][1]).toMatchObject({ method: 'DELETE' });
+  });
+
+  it('routes a protected DELETE 401 through the existing unauthorized handler', async () => {
+    const unauthorized = vi.fn();
+    setUnauthorizedHandler(unauthorized);
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({ detail: 'Invalid or expired token' }, 401));
+
+    await expect(deleteLead(12)).rejects.toMatchObject({ status: 401 });
+    expect(unauthorized).toHaveBeenCalledOnce();
+  });
+
   it('uses local demo data and never calls fetch when demo mode is enabled', async () => {
     vi.stubEnv('VITE_DEMO_MODE', 'true');
 

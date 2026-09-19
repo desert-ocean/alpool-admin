@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
@@ -42,6 +42,23 @@ function renderApp(initialEntry: string) {
 
 function mockLeadsResponse() {
   vi.mocked(fetch).mockResolvedValueOnce(jsonResponse([]));
+}
+
+const attachment = {
+  id: 4,
+  lead_id: 12,
+  original_filename: 'plan.pdf',
+  stored_filename: 'internal-name.pdf',
+  content_type: 'application/pdf',
+  size: 2048,
+  storage_path: 'internal-name.pdf',
+  created_at: '2026-09-17T10:35:00+00:00',
+};
+
+function mockLeadDetails(attachments: unknown[] = [attachment]) {
+  vi.mocked(fetch)
+    .mockResolvedValueOnce(jsonResponse(lead))
+    .mockResolvedValueOnce(jsonResponse(attachments));
 }
 
 beforeEach(() => {
@@ -183,6 +200,121 @@ describe('lead pages', () => {
     expect(screen.getByText('plan.pdf')).toBeInTheDocument();
     expect(screen.queryByText('internal-name.pdf')).not.toBeInTheDocument();
     expect(screen.queryByText('internal-name.pdf', { selector: '[title]' })).not.toBeInTheDocument();
+  });
+
+  it('opens attachment deletion confirmation and cancels without DELETE', async () => {
+    mockLeadDetails();
+    const user = userEvent.setup();
+    renderApp('/leads/12');
+
+    await screen.findByRole('heading', { name: 'Иван Петров' });
+    await user.click(screen.getByRole('button', { name: 'Удалить plan.pdf' }));
+
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveTextContent('plan.pdf');
+    await user.click(within(dialog).getByRole('button', { name: 'Отмена' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('deletes an attachment locally and prevents a second DELETE while pending', async () => {
+    mockLeadDetails();
+    const user = userEvent.setup();
+    let resolveDelete!: (response: Response) => void;
+    const deletePending = new Promise<Response>((resolve) => { resolveDelete = resolve; });
+    vi.mocked(fetch).mockImplementationOnce(() => deletePending);
+    renderApp('/leads/12');
+
+    await screen.findByRole('heading', { name: 'Иван Петров' });
+    await user.click(screen.getByRole('button', { name: 'Удалить plan.pdf' }));
+    const dialog = screen.getByRole('dialog');
+    const confirmButton = within(dialog).getByRole('button', { name: 'Удалить' });
+    await user.click(confirmButton);
+    expect(confirmButton).toBeDisabled();
+    await user.click(confirmButton);
+    expect(fetch).toHaveBeenCalledTimes(3);
+
+    resolveDelete(new Response(null, { status: 204 }));
+    expect(await screen.findByRole('status')).toHaveTextContent('Вложение удалено');
+    expect(screen.queryByText('plan.pdf')).not.toBeInTheDocument();
+    expect(screen.getByText('FILES / 0')).toBeInTheDocument();
+  });
+
+  it.each([404, 500])('keeps an attachment after DELETE %s', async (status) => {
+    mockLeadDetails();
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({ detail: 'Delete failed' }, status));
+    const user = userEvent.setup();
+    renderApp('/leads/12');
+
+    await screen.findByRole('heading', { name: 'Иван Петров' });
+    await user.click(screen.getByRole('button', { name: 'Удалить plan.pdf' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Удалить' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Delete failed');
+    expect(screen.getByText('plan.pdf')).toBeInTheDocument();
+    expect(screen.getByText('FILES / 1')).toBeInTheDocument();
+  });
+
+  it('shows lead deletion details and cancels without DELETE', async () => {
+    mockLeadDetails();
+    const user = userEvent.setup();
+    renderApp('/leads/12');
+
+    await screen.findByRole('heading', { name: 'Иван Петров' });
+    await user.click(screen.getByRole('button', { name: 'Удалить заявку' }));
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveTextContent('#12');
+    expect(dialog).toHaveTextContent('Иван Петров');
+    expect(dialog).toHaveTextContent('Вложений: 1');
+    expect(dialog).toHaveTextContent('все её вложения');
+    await user.click(within(dialog).getByRole('button', { name: 'Отмена' }));
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('deletes a lead and navigates back to the leads list', async () => {
+    mockLeadDetails();
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(jsonResponse([]));
+    const user = userEvent.setup();
+    renderApp('/leads/12');
+
+    await screen.findByRole('heading', { name: 'Иван Петров' });
+    await user.click(screen.getByRole('button', { name: 'Удалить заявку' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Удалить заявку' }));
+
+    expect(await screen.findByRole('heading', { name: 'Заявок пока нет' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Иван Петров' })).not.toBeInTheDocument();
+    expect(vi.mocked(fetch).mock.calls[2][1]).toMatchObject({ method: 'DELETE' });
+  });
+
+  it.each([404, 500])('keeps the lead after DELETE %s', async (status) => {
+    mockLeadDetails();
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({ detail: 'Delete failed' }, status));
+    const user = userEvent.setup();
+    renderApp('/leads/12');
+
+    await screen.findByRole('heading', { name: 'Иван Петров' });
+    await user.click(screen.getByRole('button', { name: 'Удалить заявку' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Удалить заявку' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Delete failed');
+    expect(screen.getByRole('heading', { name: 'Иван Петров' })).toBeInTheDocument();
+  });
+
+  it('uses the existing auth flow after a lead deletion 401', async () => {
+    mockLeadDetails();
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({ detail: 'Invalid or expired token' }, 401));
+    const user = userEvent.setup();
+    window.sessionStorage.setItem('alpool_admin_access_token', 'test-token');
+    renderApp('/leads/12');
+
+    await screen.findByRole('heading', { name: 'Иван Петров' });
+    await user.click(screen.getByRole('button', { name: 'Удалить заявку' }));
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Удалить заявку' }));
+
+    expect(await screen.findByRole('heading', { name: 'Вход в админ-панель' })).toBeInTheDocument();
+    expect(window.sessionStorage.getItem('alpool_admin_access_token')).toBeNull();
   });
 
   it('updates a lead status once and shows confirmation', async () => {
